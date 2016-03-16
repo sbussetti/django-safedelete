@@ -26,6 +26,7 @@ class SafeDeleteMixin(models.Model):
     """
 
     _safedelete_policy = SOFT_DELETE
+    _was_undeleted = False
 
     deleted = models.DateTimeField(editable=False, null=True)
 
@@ -46,15 +47,15 @@ class SafeDeleteMixin(models.Model):
         # deleted, it'll bypass this logic, which I think is fine, because
         # otherwise we'd have to shadow field changes to handle that case.
 
-        was_undeleted = False
+        self._was_undeleted = False
         if not keep_deleted:
             if self.deleted and self.pk:
-                was_undeleted = True
+                self._was_undeleted = True
             self.deleted = None
 
         super(SafeDeleteMixin, self).save(**kwargs)
 
-        if was_undeleted:
+        if self._was_undeleted:
             # send undelete signal
             using = kwargs.get('using') or router.db_for_write(self.__class__, instance=self)
             post_undelete.send(sender=self.__class__, instance=self, using=using)
