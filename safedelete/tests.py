@@ -1,4 +1,3 @@
-import django
 from django.conf.urls import patterns, include
 from django.core.exceptions import ValidationError
 from django.contrib import admin
@@ -14,7 +13,7 @@ from .utils import (
     HARD_DELETE_NOCASCADE, SOFT_DELETE, NO_DELETE,
     DELETED_VISIBLE_BY_PK
 )
-from .managers import SafeDeleteManager
+from .managers import SafeDeleteManager, SafeDeleteQueryset
 from .models import SafeDeleteMixin
 from .signals import post_softdelete, post_undelete
 
@@ -60,6 +59,27 @@ class VeryImportant(SafeDeleteMixin):
     _safedelete_policy = NO_DELETE
 
     name = models.CharField(max_length=200)
+
+
+class CustomQueryset(SafeDeleteQueryset):
+    def best(self):
+        return self.filter(color='green')
+
+
+class CustomManager(SafeDeleteManager):
+    def get_queryset(self):
+        queryset = CustomQueryset(self.model, using=self._db)
+        return queryset.filter(deleted__isnull=True)
+
+    def best(self):
+        return self.get_queryset().best()
+
+
+class HasCustomQueryset(SafeDeleteMixin):
+    name = models.CharField(max_length=200)
+    color = models.CharField(max_length=5, choices=(('red', 'Red'), ('green', 'Green')))
+
+    objects = CustomManager()
 
 
 # ADMINMODEL (FOR TESTING)
@@ -262,6 +282,13 @@ class SimpleTest(TestCase):
 
         self.assertEqual(Category.objects.count(), 3)
 
+    def test_custom_queryset_original_behavior(self):
+        HasCustomQueryset.objects.create(name='Foo', color='red')
+        HasCustomQueryset.objects.create(name='Bar', color='green')
+
+        self.assertEqual(HasCustomQueryset.objects.count(), 2)
+        self.assertEqual(HasCustomQueryset.objects.best().count(), 1)
+
     def test_related_manager(self):
         order = Order.objects.create(name='order 2')
         Order.objects.create(name='order 3')
@@ -329,16 +356,9 @@ class AdminTestCase(TestCase):
     def test_admin_model(self):
         changelist_default = self.get_changelist(self.request, Category, self.modeladmin_default)
         changelist = self.get_changelist(self.request, Category, self.modeladmin)
-        if django.VERSION[1] == 4 or django.VERSION[1] == 5:
-            # Django == 1.4 or 1.5
-            self.assertEqual(changelist.get_filters(self.request)[0][0].title, "deleted")
-            self.assertEqual(changelist.get_query_set(self.request).count(), 3)
-            self.assertEqual(changelist_default.get_query_set(self.request).count(), 2)
-        else:
-            # Django >= 1.6
-            self.assertEqual(changelist.get_filters(self.request)[0][0].title, "deleted")
-            self.assertEqual(changelist.queryset.count(), 3)
-            self.assertEqual(changelist_default.queryset.count(), 2)
+        self.assertEqual(changelist.get_filters(self.request)[0][0].title, "deleted")
+        self.assertEqual(changelist.queryset.count(), 3)
+        self.assertEqual(changelist_default.queryset.count(), 2)
 
     def test_admin_listing(self):
         """ Test deleted objects are in red in admin listing. """
